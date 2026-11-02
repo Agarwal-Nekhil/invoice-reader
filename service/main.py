@@ -4,7 +4,6 @@ import uuid
 import re
 from typing import Dict, List, Tuple
 from enum import Enum
-import asyncio # Keep for potential async operations if needed
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, BackgroundTasks, status
@@ -12,7 +11,7 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 import pytesseract
 from pdf2image import convert_from_path
-import PyPDF2 # New dependency from check.py
+import PyPDF2
 
 from mistralai import Mistral
 
@@ -31,8 +30,8 @@ if not APP_API_KEY:
 client = Mistral(api_key=MISTRAL_API_KEY)
 
 app = FastAPI(
-    title="Optimized Invoice Processing API",
-    description="API for extracting structured data from PDF invoices using an optimized direct LLM pipeline."
+    title="Invoice Reader API",
+    description="Fills a JSON template from a PDF invoice: text layer first, OCR when needed, one LLM call."
 )
 
 # --- API Key Authentication ---
@@ -74,7 +73,7 @@ class InvoiceProcessingStatusResponse(BaseModel):
     flag_array: List[int] | None = None
     error_detail: str | None = None
 
-# --- Optimized Invoice Processing Functions (from check.py) ---
+# --- Extraction ---
 
 def strip_markdown_code_block(text: str) -> str:
     """Removes markdown code block fences from a string."""
@@ -172,9 +171,6 @@ def run_extraction_pipeline(raw_text: str, json_template: Dict[str, str]) -> Tup
         # Return empty template if JSON parsing fails
         print(f"JSONDecodeError in run_extraction_pipeline: Could not parse LLM response: {cleaned_response}")
         filled_json = {k: "" for k in json_template.keys()} # Ensure all keys are present, even if empty
-        # Optionally log the raw response for debugging
-        # with open("extraction_raw_output.txt", "w") as f:
-        #     f.write(raw_llm_response)
         
     # Ensure all keys from template are in filled_json, even if empty, for consistent flagging
     final_filled_json = {k: filled_json.get(k, "") for k in json_template.keys()}
@@ -191,7 +187,6 @@ def process_invoice_document_background(
     """
     The main invoice processing logic, executed in a background task.
     Updates the global invoice_processing_tasks dictionary with status and results.
-    This version uses the optimized pipeline.
     """
     try:
         # Set status to processing
@@ -369,4 +364,4 @@ async def get_invoice_status(
 
 @app.get("/")
 async def root():
-    return {"message": "Optimized Invoice Processing API is running. Check /docs for API documentation."}
+    return {"message": "Invoice Reader API is running. Check /docs for API documentation."}

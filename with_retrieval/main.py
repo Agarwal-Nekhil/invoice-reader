@@ -4,7 +4,6 @@ import uuid
 import re
 from typing import Dict, List, Tuple
 from enum import Enum
-import asyncio # Import asyncio for async operations if needed in the future, though not strictly for this fix
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, BackgroundTasks, status
@@ -13,10 +12,6 @@ from pydantic import BaseModel
 import pytesseract
 from pdf2image import convert_from_path
 
-# Import your existing invoice processing functions from Langchain and Mistral
-# Ensure these libraries are installed:
-# pip install fastapi uvicorn python-multipart python-dotenv "mistralai>=0.2.0" "langchain-community" "langchain-huggingface" "pytesseract" "pdf2image"
-# Also ensure you have Poppler and Tesseract OCR installed on your system.
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -86,9 +81,7 @@ class InvoiceProcessingStatusResponse(BaseModel):
     flag_array: List[int] | None = None
     error_detail: str | None = None
 
-# --- Your original invoice processing functions ---
-# These functions are kept as is, but process_invoice_document is renamed
-# and adapted to update the in-memory dictionary.
+# --- Extraction ---
 
 def strip_markdown_code_block(text: str) -> str:
     """Removes markdown code block fences from a string."""
@@ -241,7 +234,7 @@ def process_invoice_document_background(
             "status": InvoiceStatus.COMPLETED,
             "filled_json": filled_json,
             "flag_array": flag_array,
-            "method_used": method_used # Keep track of which method was finally used
+            "method_used": method_used
         })
 
     except Exception as e:
@@ -261,14 +254,12 @@ def process_invoice_document_background(
 
 # --- FastAPI Endpoints ---
 
-# ONLY the upload_invoice function needs this change
-
 @app.post("/upload-invoice", response_model=UploadInvoiceResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_invoice(
-    background_tasks: BackgroundTasks, # This has no default, so it comes first
+    background_tasks: BackgroundTasks,
     pdf_file: UploadFile = File(..., description="PDF invoice file"),
     json_template_file: UploadFile = File(..., description="JSON template file"),
-    api_key: str = Depends(get_api_key) # All arguments with defaults come after
+    api_key: str = Depends(get_api_key)
 ):
     """
     API 1: Uploads an invoice PDF and a JSON template for processing.
@@ -346,7 +337,7 @@ async def upload_invoice(
 @app.get("/invoice-status/{invoice_id}", response_model=InvoiceProcessingStatusResponse)
 async def get_invoice_status(
     invoice_id: str,
-    api_key: str = Depends(get_api_key) # Protect this endpoint with API key
+    api_key: str = Depends(get_api_key)
 ):
     """
     API 2: Checks the status of an invoice processing task.
@@ -374,7 +365,7 @@ async def get_invoice_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Invoice processing failed: {task_info.get('error_detail')}",
-            headers={"X-Invoice-Status": InvoiceStatus.FAILED.value} # Custom header for programmatic checking
+            headers={"X-Invoice-Status": InvoiceStatus.FAILED.value}
         )
     else:
         # For RECEIVED or PROCESSING statuses
@@ -384,7 +375,6 @@ async def get_invoice_status(
             message=f"Invoice processing is {current_status.value}."
         )
 
-# Example Usage (for local testing, can be removed in production)
 @app.get("/")
 async def root():
     return {"message": "Invoice Processing API is running. Check /docs for API documentation."}
