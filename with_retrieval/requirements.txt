@@ -1,10 +1,11 @@
 fastapi
 uvicorn[standard]
 python-dotenv
-mistralai>=0.2.0
+mistralai>=1.0,<2
 pytesseract
 pdf2image
 langchain-community
+pypdf
 langchain-huggingface
-python-multipart 
-sentence-transformers 
+python-multipart
+sentence-transformers
