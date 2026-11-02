@@ -6,7 +6,8 @@ Small) fill the template. The template can have any field names.
 
 I built it in 2025 during my AI/ML internship, starting from a basic RAG prototype I was handed. This repo is the
 July 2025 FastAPI and Docker version. The version that went live later ran on Google Cloud Functions and is not in
-this repo (see [What came next](#what-came-next)).
+this repo (see [What came next](#what-came-next)). In November 2026 I tidied the repo: clearer folders, tests, input
+limits, and pypdf in place of the deprecated PyPDF2.
 
 ## How it reads an invoice
 
@@ -17,7 +18,7 @@ POST /upload-invoice   (PDF + JSON template, X-API-Key header)
 FastAPI saves the PDF and replies at once: 202 + invoice_id ----> the client polls
       |  (the rest runs as a background task)                     GET /invoice-status/{invoice_id}
       v                                                           received, processing, completed, failed
-text layer of the first two pages (PyPDF2)
+text layer of the first two pages (pypdf)
       |
       |  under 100 characters of text? ---- yes ----> OCR the pages instead (Tesseract)
       v
@@ -26,8 +27,8 @@ one Mistral call fills the template; anything not in the document stays ""
       v
 flag per field: 1 found, 0 missing
       |
-      |  more than 30% missing and the text layer was used? ---- yes ----> OCR the pages, ask once more
-      v
+      |  more than 30% missing and the text layer was used? ---- yes ----> OCR the pages, ask once more,
+      v                                                                    keep the read that found more fields
 result kept in memory, temporary PDF deleted
 ```
 
@@ -36,7 +37,8 @@ Why it is built this way:
 - **Text layer first.** Reading the text a PDF already carries is quick and does not misread characters the way OCR
   can. OCR runs only when the pages have almost no text, which is what a scan looks like.
 - **Retry with OCR.** If more than 30% of the fields come back empty from the text layer, the OCR text may do better,
-  so it reads the pages again with OCR and asks once more. This happens at most once per invoice.
+  so it reads the pages again with OCR and asks once more. This happens at most once per invoice, and the OCR result
+  replaces the first one only if it found more fields.
 - **One LLM call, no retrieval.** An invoice of one or two pages fits in the model's context window, so the whole
   text goes in one call (cut at 16,000 characters as a guard). The earlier version chunked the text, embedded it and
   sent the top five chunks to the model; that step added a vector store and an embedding model for no gain on
@@ -52,8 +54,12 @@ You need Docker and a Mistral API key.
 ```sh
 cp .env.example .env    # then set MISTRAL_KEY and API_KEY in .env (see Configuration)
 docker build -t invoice-reader service
-docker run --rm --env-file .env -p 8000:8000 invoice-reader
+docker run --rm --env-file .env -p 127.0.0.1:8000:8000 invoice-reader
 ```
+
+The port is published on your machine only. To lock the container down further, add `--read-only --tmpfs
+/app/temp_invoices:mode=1777 --tmpfs /tmp:mode=1777 --cap-drop ALL --security-opt no-new-privileges` to the
+`docker run` line.
 
 From a second terminal, in the repo root. Use the same value you put in `API_KEY`:
 
@@ -128,8 +134,8 @@ uvicorn main:app --port 8000
 
 | Call | Send | Reply |
 |---|---|---|
-| `POST /upload-invoice` | multipart form: `pdf_file` and `json_template_file` | 202 with `invoice_id`. 400 if the template is not a JSON object. 401 for a missing or wrong key. |
-| `GET /invoice-status/{invoice_id}` | nothing | 200 with `status`; once `completed` it also has `filled_json` and `flag_array`. 404 for an unknown ID. 500 with the reason if the job failed. |
+| `POST /upload-invoice` | multipart form: `pdf_file` and `json_template_file` | 202 with `invoice_id`. 400 if the file is not a PDF or the template is not a JSON object with at least one field. 401 for a missing or wrong key. 413 if the PDF is over 10 MB or the template over 64 KB. |
+| `GET /invoice-status/{invoice_id}` | nothing | 200 with `status`; once `completed` it also has `filled_json` and `flag_array`. 404 for an unknown or expired ID. If the job failed, 200 with `status` set to `failed` and a short `error_detail` (for example, no text could be read from the PDF); the full error is in the service log. |
 
 Both calls need the `X-API-Key` header.
 
@@ -144,14 +150,16 @@ Copy `.env.example` to `.env` and fill both in. `.env` is ignored by git, and th
 either value is empty. The invoice text is sent to the Mistral API, so do not run invoices through it unless that is
 allowed.
 
-These are constants in `service/main.py`, not environment variables: the model (`mistral-small-latest`), the
-100-character OCR threshold, the 30% retry threshold, the first two pages, and the 16,000-character cap.
+These are constants at the top of `service/main.py`, not environment variables: the model (`mistral-small-latest`),
+the first two pages, the 100-character OCR threshold, the 30% retry threshold, the 16,000-character cap on the text
+sent to the model, a 60-second timeout on the model call and on each OCR step, the 10 MB and 64 KB upload caps, and
+how many results are kept (1,000).
 
 ## Tests
 
 The tests replace the LLM call with a canned reply, so they need no key and no network. They cover the routing (text
-layer, OCR, the 30% retry rule), the per-field flags and the API (key check, 202, polling). The OCR test runs only
-where Tesseract and Poppler are installed, as in the Docker image.
+layer, OCR, the 30% retry rule), the per-field flags, the upload limits and the API (key check, 202, polling). The OCR test runs only
+where Tesseract and Poppler are installed.
 
 ```sh
 cd service
@@ -166,8 +174,12 @@ python -m unittest -v
   text loses which value belongs to which field.
 - I also tried a vision model (Gemini) that reads the page image straight into the JSON. It was tested locally only
   and weighed against its cost.
-- Results live in memory, so a restart loses them, and several worker processes would not share them.
+- Results live in memory (the newest 1,000 are kept), so a restart loses them, and several worker processes would
+  not share them.
 - Only the first two pages are read, and OCR is set up for English only.
+- It is a sample service, not a hardened one: plain HTTP, one shared API key, no rate limit. Run it behind a reverse
+  proxy if it is ever exposed. The invoice text goes into the prompt as it is, so text inside an invoice can steer
+  the model; treat the output as untrusted input.
 - Templates are flat: field names with empty values. Every value comes back as a string, line items included; if the
   model returns a list or a number for a field, it is turned into text.
 - No CI.
@@ -197,8 +209,8 @@ This repo is the July 2025 version. The code that followed is not in it.
 
 ## Stack
 
-Python 3.11, FastAPI, PyPDF2, Tesseract (pytesseract, pdf2image), the Mistral API, Docker. `with_retrieval/` also
+Python 3.11, FastAPI, pypdf, Tesseract (pytesseract, pdf2image), the Mistral API, Docker. `with_retrieval/` also
 uses Chroma and Hugging Face embeddings.
 
-Last built and tested on 2 November 2026 with Python 3.11, FastAPI 0.162, mistralai 1.12, PyPDF2 3.0.1 and Tesseract
+Last built and tested on 2 November 2026 with Python 3.11, FastAPI 0.162, mistralai 1.12, pypdf 6.21 and Tesseract
 5.3. `mistralai` is limited to version 1 in `requirements.txt` because the code uses its 1.x interface.
