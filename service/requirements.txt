@@ -5,6 +5,4 @@ python-multipart
 mistralai>=1.0,<2
 pytesseract
 pdf2image
-PyPDF2
 pypdf
-langchain-community
