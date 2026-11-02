@@ -39,6 +39,18 @@ class HelperTests(unittest.TestCase):
         self.assertFalse(main.is_text_enough(" " * 200))
 
 
+class TextLayerTests(unittest.TestCase):
+    def test_text_sample_has_a_text_layer(self):
+        text = main.extract_text_from_pdf(str(SAMPLES / "invoice_text.pdf"))
+        self.assertIn("INV-2023-0456", text)
+        self.assertTrue(main.is_text_enough(text))
+
+    def test_langchain_loader_is_the_fallback_when_pypdf2_fails(self):
+        with mock.patch.object(main.PyPDF2, "PdfReader", side_effect=ValueError("broken file")):
+            text = main.extract_text_from_pdf(str(SAMPLES / "invoice_text.pdf"))
+        self.assertIn("INV-2023-0456", text)
+
+
 class ExtractionTests(unittest.TestCase):
     def run_pipeline(self, llm_reply):
         with mock.patch.object(main, "extract_all_fields_at_once", return_value=llm_reply):
@@ -171,8 +183,12 @@ class ApiTests(unittest.TestCase):
             "invoice_number": "INV-2023-0456",
             "date": "2023-11-15",
             "vendor_name": "Acme Supplies",
-            "total_amount": "1299.99",
-        })
+            "vendor_address": "123 Business Rd, New York, NY",
+            "customer_name": "John Doe",
+            "customer_address": "456 Customer Ave, Boston, MA",
+            "total_amount": "1,299.99",
+            "due_date": "2023-12-15",
+        })  # line_items left out on purpose: one empty field of nine is under the 30% retry line
         with mock.patch.object(main, "extract_all_fields_at_once", return_value=reply):
             response = self.upload()  # the background job runs before the test client returns
         self.assertEqual(response.status_code, 202)
@@ -185,7 +201,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(body["filled_json"]["invoice_number"], "INV-2023-0456")
         # template order: number, date, vendor name, vendor address, customer name,
         # customer address, total, due date, line items
-        self.assertEqual(body["flag_array"], [1, 1, 1, 0, 0, 0, 1, 0, 0])
+        self.assertEqual(body["flag_array"], [1, 1, 1, 1, 1, 1, 1, 1, 0])
         self.assertEqual(main.invoice_processing_tasks[invoice_id]["method_used"], "text")
 
     def test_image_sample_has_no_text_layer(self):
