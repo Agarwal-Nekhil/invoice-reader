@@ -71,6 +71,17 @@ class ExtractionTests(unittest.TestCase):
         filled, flags = self.run_pipeline('```json\n{"invoice_number": "INV-1"}\n```')
         self.assertEqual(filled["invoice_number"], "INV-1")
 
+    def test_lists_numbers_and_nulls_become_text(self):
+        reply = json.dumps({"invoice_number": 456, "date": None, "vendor_name": [],
+                            "total_amount": [{"item": "Widget A", "qty": 2}]})
+        filled, flags = self.run_pipeline(reply)
+        self.assertEqual(filled["invoice_number"], "456")
+        self.assertEqual(filled["date"], "")
+        self.assertEqual(filled["vendor_name"], "")
+        self.assertEqual(filled["total_amount"], '[{"item": "Widget A", "qty": 2}]')
+        self.assertEqual(flags, [1, 0, 0, 1])
+        self.assertTrue(all(isinstance(v, str) for v in filled.values()))
+
     def test_unparseable_reply_gives_an_empty_template(self):
         filled, flags = self.run_pipeline("Sorry, I cannot read this.")
         self.assertEqual(filled, {k: "" for k in TEMPLATE})
@@ -203,6 +214,15 @@ class ApiTests(unittest.TestCase):
         # customer address, total, due date, line items
         self.assertEqual(body["flag_array"], [1, 1, 1, 1, 1, 1, 1, 1, 0])
         self.assertEqual(main.invoice_processing_tasks[invoice_id]["method_used"], "text")
+
+    def test_status_call_survives_a_model_that_returns_a_list(self):
+        reply = json.dumps({"invoice_number": "INV-1", "line_items": [{"item": "Widget A"}], "total_amount": 1299.99})
+        with mock.patch.object(main, "extract_all_fields_at_once", return_value=reply), \
+                mock.patch.object(main, "ocr_pdf_to_text", return_value="text"):
+            invoice_id = self.upload().json()["invoice_id"]
+        status = self.client.get(f"/invoice-status/{invoice_id}", headers=HEADERS)
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["filled_json"]["total_amount"], "1299.99")
 
     def test_image_sample_has_no_text_layer(self):
         text = main.extract_text_from_pdf(str(SAMPLES / "invoice_image.pdf"))

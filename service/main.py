@@ -159,6 +159,16 @@ YOUR RESPONSE:
     ).choices[0].message.content
     return response
 
+def as_text(value) -> str:
+    """The status response types every value as a string, so lists, numbers and nulls become text."""
+    if value is None or value in ([], {}):
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
 def run_extraction_pipeline(raw_text: str, json_template: Dict[str, str]) -> Tuple[Dict[str, str], List[int]]:
     """Streamlined extraction pipeline - no RAG/chunking/vectorstore overhead."""
     
@@ -173,7 +183,7 @@ def run_extraction_pipeline(raw_text: str, json_template: Dict[str, str]) -> Tup
         filled_json = {k: "" for k in json_template.keys()} # Ensure all keys are present, even if empty
         
     # Ensure all keys from template are in filled_json, even if empty, for consistent flagging
-    final_filled_json = {k: filled_json.get(k, "") for k in json_template.keys()}
+    final_filled_json = {k: as_text(filled_json.get(k, "")) for k in json_template.keys()}
     flag_array = [1 if final_filled_json.get(k, "") else 0 for k in json_template.keys()]
     return final_filled_json, flag_array
 
