@@ -112,7 +112,7 @@ http://localhost:8000/docs.
 
 ### Without Docker
 
-You need Python 3.11, and Tesseract and Poppler on your PATH (Debian or Ubuntu: `apt install tesseract-ocr
+You need Python 3.11 or newer, and Tesseract and Poppler on your PATH (Debian or Ubuntu: `apt install tesseract-ocr
 poppler-utils`; macOS: `brew install tesseract poppler`; Windows: install both and add them to PATH).
 
 ```sh
@@ -128,7 +128,7 @@ uvicorn main:app --port 8000
 
 | Call | Send | Reply |
 |---|---|---|
-| `POST /upload-invoice` | multipart form: `pdf_file` and `json_template_file` | 202 with `invoice_id`. 400 if the template is not a JSON object. 401 for a wrong key. |
+| `POST /upload-invoice` | multipart form: `pdf_file` and `json_template_file` | 202 with `invoice_id`. 400 if the template is not a JSON object. 401 for a missing or wrong key. |
 | `GET /invoice-status/{invoice_id}` | nothing | 200 with `status`; once `completed` it also has `filled_json` and `flag_array`. 404 for an unknown ID. 500 with the reason if the job failed. |
 
 Both calls need the `X-API-Key` header.
@@ -168,7 +168,8 @@ python -m unittest -v
   and weighed against its cost.
 - Results live in memory, so a restart loses them, and several worker processes would not share them.
 - Only the first two pages are read, and OCR is set up for English only.
-- Templates are flat: field names with empty values. Every value comes back as a string, line items included.
+- Templates are flat: field names with empty values. Every value comes back as a string, line items included; if the
+  model returns a list or a number for a field, it is turned into text.
 - No CI.
 
 ## What came next
@@ -188,7 +189,9 @@ This repo is the July 2025 version. The code that followed is not in it.
 
 - `service/`: the service to run (`main.py`), its Dockerfile, requirements and tests.
 - `with_retrieval/`: the same service with the retrieval step I was handed (chunks, e5-large-v2 embeddings in Chroma,
-  top five to the LLM), with my text-first, OCR and retry steps around it.
+  top five to the LLM), with my text-first, OCR and retry steps around it. Kept for comparison: it was written against
+  July 2025 package versions and I have not rebuilt it since (its text splitter import no longer resolves with
+  current versions), so expect to fix imports before it runs.
 - `samples/`: a made-up invoice with a text layer, a made-up invoice as an image, and an example template.
 - `.env.example`: the two variables the service needs.
 
@@ -196,3 +199,6 @@ This repo is the July 2025 version. The code that followed is not in it.
 
 Python 3.11, FastAPI, PyPDF2, Tesseract (pytesseract, pdf2image), the Mistral API, Docker. `with_retrieval/` also
 uses Chroma and Hugging Face embeddings.
+
+Last built and tested on 2 November 2026 with Python 3.11, FastAPI 0.162, mistralai 1.12, PyPDF2 3.0.1 and Tesseract
+5.3. `mistralai` is limited to version 1 in `requirements.txt` because the code uses its 1.x interface.
